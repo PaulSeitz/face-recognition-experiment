@@ -1,10 +1,21 @@
 import cv2 as cv
 
-if __name__ == '__main__':
+
+def detect_faces_in_image(image, scale_factor=1.2, min_neighbors=5):
     # Load the cascade
     face_cascade_frontal = cv.CascadeClassifier(cv.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    # TODO: think about loading other cascades for profile face detection
 
+    # Convert the image to grayscale
+    gray_img = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+
+    # Detect faces using the loaded cascade (reduce size by 10% and set the number of needed neighbors to 5)
+    faces_front = face_cascade_frontal.detectMultiScale(gray_img, scale_factor, min_neighbors)
+
+    # return the detected faces
+    return faces_front
+
+
+def start_recording():
     # capture video from the webcam
     cap = cv.VideoCapture(0)
 
@@ -18,7 +29,7 @@ if __name__ == '__main__':
         gray_img = cv.cvtColor(current_frame, cv.COLOR_BGR2GRAY)
 
         # Detect faces using the loaded cascade (reduce size by 10% and set the number of needed neighbors to 5)
-        faces_front = face_cascade_frontal.detectMultiScale(gray_img, 1.2, 5)
+        faces_front = detect_faces_in_image(current_frame)
 
         # draw rectangles around the detected faces
         for (x, y, w, h) in faces_front:
@@ -32,4 +43,3 @@ if __name__ == '__main__':
 
     cap.release()
     cv.destroyAllWindows()
-
