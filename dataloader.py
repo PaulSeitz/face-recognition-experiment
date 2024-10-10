@@ -4,12 +4,13 @@ import random
 import cv2 as cv
 import torch
 from torch.utils.data import Dataset
-import torchvision.transforms as transforms
 from face_detection import detect_faces_in_image
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import utils
+from torchvision import transforms
 
 random_images = []
 
@@ -72,10 +73,14 @@ def show_images(images):
 
 
 # load the images from disk
-def load_images_from_disk(path, curr_class):
+def load_images_from_disk(path, curr_class, use_folders=False):
     images: (np.ndarray, str) = []
 
     image_paths = get_directories(path)
+
+    # only load the first 5000 images
+    if len(image_paths) > 4500:
+        image_paths = image_paths[:4500]
 
     for sub_dir_path in image_paths:
         # scan for images
@@ -89,12 +94,11 @@ def load_images_from_disk(path, curr_class):
             if image is None:
                 continue
 
-            # only use the first 2000 images
-            if len(images) > 1000:
-                break
-
             # tag the image with the current class
             tag = curr_class
+
+            if use_folders:
+                tag = sub_dir_path.split('/')[-1]
 
             images.append((image, tag))
 
@@ -106,7 +110,11 @@ def load_images_from_disk(path, curr_class):
 
         video_images = []
         for video_path in found_videos:
-            video_images.extend(load_videos_from_disk(video_path, curr_class))
+                if use_folders:
+                    video_images.extend(load_videos_from_disk(video_path, sub_dir_path.split('/')[-1]))
+                else:
+                    video_images.extend(load_videos_from_disk(video_path, curr_class))
+
 
         images.extend(video_images)
 
@@ -143,46 +151,27 @@ def detect_faces(images: list[tuple[np.ndarray, str]]):
     iterator.set_description('Detecting faces')
     for image, tag in iterator:
 
-        faces: list[np.ndarray] = detect_faces_in_image(image)
+        faces = detect_faces_in_image(image)
 
         if not faces:
             continue
 
-        for face in faces:
+        for face in faces[0]:
             detected_faces.append((face, tag))
 
     return detected_faces
 
 
-# transform the retrieved faces to increase the amount of training data
 def transform_faces(faces: list[tuple[np.ndarray, str]]):
     transformed_faces = []
 
     for face, tag in faces:
-
+        # Original face
         transformed_faces.append((face, tag))
 
-        if not isinstance(face, np.ndarray):
-            continue
-
-        # Ensure face is a 3D array (height, width, channels)
-        if len(face.shape) != 3:
-            continue
-
-        # flip the image
+        # Flipped face
         flipped_face = cv.flip(face, 1)
         transformed_faces.append((flipped_face, tag))
-
-        # rotate the face by 45 degrees
-        rows, cols, _ = face.shape
-        rotation_matrix = cv.getRotationMatrix2D((cols/2, rows/2), 45, 1)
-        rotated_face = cv.warpAffine(face, rotation_matrix, (cols, rows))
-        transformed_faces.append((rotated_face, tag))
-
-        # rotate the face by -45 degrees
-        rotation_matrix = cv.getRotationMatrix2D((cols/2, rows/2), -45, 1)
-        rotated_face = cv.warpAffine(face, rotation_matrix, (cols, rows))
-        transformed_faces.append((rotated_face, tag))
 
     return transformed_faces
 
@@ -195,26 +184,21 @@ def get_dataset(classes: dict[str, list[str]]):
     for item in classes.items():
         tag = item[0]
         paths: list[str] = item[1]
-        curr_images = load_images_from_disk(paths, tag)
+
+        curr_images = []
+        # if the tag is the standard placeholder, use the subdirectory names as tags
+        if tag == "[]":
+            for path in paths:
+                curr_images += load_images_from_disk([path], tag, use_folders=True)
+        else:
+            curr_images = load_images_from_disk(paths, tag)
 
         # add all the images to the list
         images.extend(curr_images)
 
-    # resize all the images to 400x400
-    for idx, (image, tag) in enumerate(images):
-        images[idx] = (cv.resize(image, (1024, 1024)), tag)
-
-    number_of_images = len(images)
-
     detected_faces: list[tuple[np.ndarray, str]] = detect_faces(images)
 
-    detected_faces = transform_faces(
-        detected_faces
-    )
-
-    number_detected_faces = len(detected_faces)
-
-    print(f'The number of images is {number_of_images} and the number of detected faces is {number_detected_faces}')
+    detected_faces = transform_faces(detected_faces)
 
     # shuffle the dataset
     random.shuffle(detected_faces)
@@ -222,66 +206,52 @@ def get_dataset(classes: dict[str, list[str]]):
     return detected_faces
 
 
-def resize_image(img, size=(128, 128)):
-
-    # convert to black and white (i.e. delete the 3rd dimension)
-    img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
-
-    # Define the transformation to apply to the face images
-    transform = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize(size),
-        transforms.CenterCrop(size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    # Apply the transformation
-    img_tensor = transform(img)
-
-    return img_tensor
-
-
 def get_random_image():
     return random_images
 
 
 class FaceDataset(Dataset):
-    def __init__(self, dataset: list[tuple[np.ndarray, str]]):
-        self.dataset = dataset
+    def __init__(self, dataset: list[tuple[np.ndarray, str]], classes):
+        self.classes = classes
+        self.class_to_idx = {cls: idx for idx, cls in enumerate(classes)}
+        self.dataset = []
+        for image, tag in dataset:
+            if tag in self.class_to_idx:
+                self.dataset.append((utils.resize_image(image), self.class_to_idx[tag]))
 
     def __len__(self):
-        return int(len(self.dataset))
+        return len(self.dataset)
 
     def __getitem__(self, idx):
-        data = self.dataset[idx]
-        img = resize_image(data[0])
-        label = data[1]
-        return img, label
+        image, label = self.dataset[idx]
+        label_tensor = torch.zeros(len(self.classes))
+        label_tensor[label] = 1
+        return image, label_tensor
+
+    def get_classes(self):
+        return self.classes
 
 
-def get_dataloader(classes, save_faces=False, load_faces=False):
+def get_dataloader(classes, save_faces=False, load_faces=False, max_images_per_class=None):
     if load_faces:
         images = load_faces_from_file('./data/faces.pkl')
+        with open('./data/classes.pkl', 'rb') as file:
+            class_string = pickle.load(file)
     else:
         images = get_dataset(classes)
+        class_string = list(set(label for _, label in images))
 
-        classes_list = list(classes.keys())
-
-        # Transform tags to numbers
-        for idx, (img, label) in enumerate(images):
-            class_idx = classes_list.index(label) if label in classes_list else 0
-            images[idx] = (img, class_idx)
+        # Apply data augmentation
+        images = transform_faces(images)
 
         if save_faces:
             save_faces_to_file(images, './data/faces.pkl')
+            with open('./data/classes.pkl', 'wb') as file:
+                pickle.dump(class_string, file)
 
-    # print the number of each class
-    for i in range(len(classes)):
-        print(f"Class {i} has {len([label for _, label in images if label == i])} images")
 
-    return FaceDataset(images)
 
+    return FaceDataset(images, class_string)
 
 def save_faces_to_file(images, path):
     print("saved faces\n")

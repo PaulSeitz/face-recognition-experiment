@@ -5,6 +5,19 @@ from tqdm import tqdm
 import numpy as np
 
 
+def calculate_corrects(outputs, labels):
+    # Get the predicted class (index of the maximum value) for each sample in outputs
+    predicted = torch.argmax(outputs, dim=1)
+
+    # Get the true class (index of the 1 in one-hot encoded labels) for each sample
+    true_classes = torch.argmax(labels, dim=1)
+
+    # Compare predictions with true classes and sum up the correct predictions
+    correct_predictions = (predicted == true_classes).sum().item()
+
+    return correct_predictions
+
+
 class FaceRecognitionCNN(nn.Module):
     classes = []
 
@@ -16,46 +29,42 @@ class FaceRecognitionCNN(nn.Module):
             self.classes = classes
             # base model modelled after AlexNet (https://proceedings.neurips.cc/paper_files/paper/2012/file/c399862d3b9d6b76c8436e924a68c45b-Paper.pdf)
             self.convolution = nn.Sequential(
-                nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
-                nn.LeakyReLU(inplace=True),
+                nn.Conv2d(3, 48, kernel_size=11, stride=4, padding=2),
+                nn.ReLU(inplace=True),
                 nn.MaxPool2d(kernel_size=3, stride=2),
-                nn.Conv2d(64, 192, kernel_size=5, padding=2),
-                nn.LeakyReLU(inplace=True),
-                nn.MaxPool2d(kernel_size=3, stride=2),
-                nn.Conv2d(192, 384, kernel_size=3, padding=1),
-                nn.LeakyReLU(inplace=True),
-                nn.Conv2d(384, 256, kernel_size=3, padding=1),
-                nn.LeakyReLU(inplace=True),
-                nn.Conv2d(256, 256, kernel_size=3, padding=1),
-                nn.LeakyReLU(inplace=True),
-                nn.MaxPool2d(kernel_size=3, stride=2)
-            )
-            self.pool = nn.AdaptiveAvgPool2d((3, 3))
 
-            # Calculate the correct input size for the linear layer
-            with torch.no_grad():
-                x = torch.randn(1, 3, 255, 255)
-                x = self.convolution(x)
-                x = self.pool(x)
-                x = torch.flatten(x, 1)
-                self.fc_input_size = x.size(1)
+                nn.Conv2d(48, 128, kernel_size=5, padding=2),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=3, stride=2),
+
+                nn.Conv2d(128, 256, kernel_size=3, padding=1),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(256, 256, kernel_size=3, padding=1),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(256, 128, kernel_size=3, padding=1),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=3, stride=2),
+            )
 
             self.linearClassifier = nn.Sequential(
-                nn.Dropout(p=0.5),
-                nn.Linear(self.fc_input_size, 4096),
-                nn.LeakyReLU(inplace=True),
-                nn.Dropout(p=0.5),
+                nn.Dropout(p=0.8),
+                nn.Linear(128 * 3 * 3, 4096),
+                nn.ReLU(inplace=True),
+
+                nn.Dropout(p=0.8),
                 nn.Linear(4096, 4096),
-                nn.LeakyReLU(inplace=True),
-                nn.Linear(4096, len(classes)),
+                nn.ReLU(inplace=True),
+
+                nn.Linear(4096, len(self.classes)),
             )
 
-    def forward(self, data):
-        data = self.convolution(data)
-        data = self.pool(data)
-        data = torch.flatten(data, 1)
-        data = self.linearClassifier(data)
-        return data
+    def forward(self, x):
+        x = self.convolution(x)
+        x = torch.flatten(x, 1)
+        x = self.linearClassifier(x)
+        return x
 
     def train_epoch(self, data_loader: torch_data.DataLoader, optimizer: torch.optim.Optimizer, device, loss_function):
         # initialize fancy output
@@ -74,7 +83,7 @@ class FaceRecognitionCNN(nn.Module):
             # get the image and labels
             image, labels = data
             image = image.to(device)
-            labels = labels.to(device)
+            labels = labels.float().to(device)
 
             # zero the gradients
             optimizer.zero_grad()
@@ -89,9 +98,9 @@ class FaceRecognitionCNN(nn.Module):
             optimizer.step()
             mean_loss.append(loss.item())
 
-            _, predicted = outputs.max(1)
+            #_, predicted = outputs.max(1)
             total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+            correct += calculate_corrects(outputs, labels)
 
             console_out.set_postfix({
                 "Loss": np.mean(mean_loss),
@@ -106,13 +115,15 @@ class FaceRecognitionCNN(nn.Module):
         # set the model to evaluation mode
         self.train(False)
 
+        correct = 0
+        total = 0
         mean_loss = []
         # iterate over the batch
         for i, data in enumerate(console_out):
             # get the image and labels
             image, labels = data
             image = image.to(device)
-            labels = labels.to(device)
+            labels = labels.float().to(device)
 
             with torch.no_grad():
                 outputs = self(image)
@@ -120,7 +131,19 @@ class FaceRecognitionCNN(nn.Module):
 
             mean_loss.append(loss.to("cpu").item())
 
-            console_out.set_postfix({"Loss": np.array(mean_loss).mean()})
+            #_, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += calculate_corrects(outputs, labels)
+
+            console_out.set_postfix({
+                "Loss": np.mean(mean_loss),
+                "Acc": 100. * correct / total
+            })
+
+            console_out.set_postfix({
+                "Loss": np.mean(mean_loss),
+                "Acc": 100. * correct / total
+            })
 
         return np.array(mean_loss).mean()
 
@@ -130,12 +153,13 @@ class FaceRecognitionCNN(nn.Module):
             image = image.to(device)
 
             output = self(image)
+            output = torch.nn.functional.softmax(output, dim=1)
 
             print(output)
 
             index = torch.argmax(output, dim=1).item()
             # get the class name
-            name = list(self.classes.keys())[index]
+            name = self.classes[index]
             return name
 
     def save_model(self, path, loss):
