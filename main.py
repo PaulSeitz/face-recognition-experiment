@@ -1,9 +1,9 @@
 import os
-
 import face_detection
 import argparse
 import train
 import torch
+import fine_tune
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -19,16 +19,27 @@ def parse_args():
     parser.add_argument('--load_model', type=str, default='', help='Path to a saved model')
     parser.add_argument('--training_params', type=str, default='./default_params.txt',
                         help='Path to a training parameter file')
+    parser.add_argument('--save_faces', action='store_true', help='Save the detected faces to a file')
     return parser.parse_args()
 
 
 def extract_training_params(path):
+    """
+    Extract the training parameters from the provided file
+    :param path: the path to the file
+    :return: a dictionary with the parameters
+    """
     with open(path, 'r') as file:
         prms = file.readlines()
     return {param.split(":")[0]: param.split(":")[1].strip() for param in prms}
 
 
 def traverse_directories(path):
+    """
+    Traverse all directories in the given path and return the lowest level directories
+    :param path: the path to traverse
+    :return: a list of directories
+    """
     # get all the lowest level directories in the given path
     directories = []
     for root, dirs, files in os.walk(path):
@@ -38,6 +49,11 @@ def traverse_directories(path):
 
 
 def extract_classes_and_paths(path) -> dict[str, list[str]]:
+    """
+    Extract the classes and paths from the given file
+    :param path: the path to the file
+    :return: a dictionary with the classes as keys and the paths as values
+    """
     # open the file and split it into [class, [paths]] (split by : and the paths split by ;)
     with open(path, 'r') as file:
         lines = file.readlines()
@@ -70,19 +86,28 @@ def extract_classes_and_paths(path) -> dict[str, list[str]]:
 
 
 if __name__ == '__main__':
-
     args = parse_args()
 
+    # go into the specified modus - live feed detection, training of a new model or fine-tuning an existing model
     if args.detect:
         if args.load_model == '':
             print("No model provided, please provide a model to detect faces")
             exit(1)
         face_detection.start_recording(args.load_model, DEVICE)
     elif args.train:
+        # extract the classes and paths from the resource file and the training parameters
         classes = extract_classes_and_paths(args.resource_file)
         params = extract_training_params(args.training_params)
-        train.train(classes, params, args.load_model)
+        # start the training process
+        train.train(classes, params, args.load_model, args.save_faces)
     elif args.finetune:
-        print("currently not implemented")
+        if args.load_model == '':
+            print("No base model provided for fine-tuning")
+            exit(1)
+        # extract the classes and paths from the resource file and the training parameters
+        classes = extract_classes_and_paths(args.resource_file)
+        params = extract_training_params(args.training_params)
+        # start the fine-tuning process
+        fine_tune.fine_tune(args.load_model, classes, params, args.save_faces)
     else:
         print("Something went wrong, a modus is required")

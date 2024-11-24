@@ -1,4 +1,4 @@
-# Face Recognition Project
+# Personal Face Recognition Pipeline Experiment
 
 ## Introduction
 
@@ -15,12 +15,6 @@ This project implements a face detection and recognition system using deep learn
 2. Install the required dependencies using the requirements file:
    ```
    pip install -r requirements.txt
-   ```
-
-3. Download the pre-trained YuNet face detection model and place it in the `pre_trained_models` directory:
-   ```
-   mkdir pre_trained_models
-   wget -O pre_trained_models/face_detection_yunet_2023mar.onnx https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
    ```
 
 ## Usage
@@ -42,17 +36,17 @@ This project implements a face detection and recognition system using deep learn
    ```
    epochs: 16
    batch_size: 1
+   weight_decay:0.01
    learning_rate: 0.0001
-   k-fold: 4
    ```
 
 ### Command Line Options
 
 Run the main script with the following options:
 
-- `--detect`: Start real-time face detection and recognition using the webcam
+- `--detect`: Start real-time face detection and recognition using the (default) webcam
 - `--train`: Train the CNN model
-- `--finetune`: Fine-tune the CNN model (currently not implemented)
+- `--finetune`: Fine-tune the CNN model
 - `--resource_file`: Path to the resource file (default: './data/resources.txt')
 - `--load_model`: Path to a saved model for loading
 - `--training_params`: Path to the training parameter file (default: './default_params.txt')
@@ -61,12 +55,17 @@ Examples:
 
 1. To train the model:
    ```
-   python main.py --train
+   python main.py --train --resource_file ./data/resources.txt
    ```
 
 2. To run face detection and recognition:
    ```
    python main.py --detect --load_model path/to/trained_model.pth
+   ```
+   
+3. To fine-tune the model:
+   ```
+   python main.py --finetune --load_model path/to/trained_model.pth --resource_file ./data/finetune_resources.txt
    ```
 
 ## Credits

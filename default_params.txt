@@ -1,3 +1,4 @@
-epochs: 64
-batch_size: 256
-learning_rate: 0.0005
+epochs: 80
+batch_size: 128
+weight_decay:0.01
+learning_rate: 0.001
